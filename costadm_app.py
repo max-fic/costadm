@@ -6,6 +6,7 @@ Module Doc String.
 from collections import namedtuple
 import pandas as pd
 from pandas_helper import gen_weighted_func
+from costadm_io import write_df
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=invalid-name
@@ -15,29 +16,6 @@ T_PIS = 0.0165
 T_COFINS = 0.0760
 Fmt = namedtuple('fmt', ['txt', 'align', 'emp'], defaults=['{}', 'right', 'none'])
 ColDesc = namedtuple('colDesc', ['col', 'type', 'fmt'], defaults=[Fmt('{}', 'right', 'none')])
-
-map_cols_quotes = {
-    'Código': ('citem', 'str'),
-    'Descrição': ('item', 'str'),
-    'ICMS': ('icms%', 'float'),
-    'IPI': ('ipi%',  'float'),
-    'Pis/Cofins': ('pis%', 'float'),
-    'Preço Convertido R$ c/IPI': ('costtax_item', 'float'),
-    'Preço NET s/impostos c/frete': ('cost_item', 'float')
-}
-
-map_cols_structure = {
-    'Código': ('cprod', 'int'),
-    'Produto': ('prod', 'str'),
-    'Industrializador': ('ind', 'str'),
-    'Tipo de Insumo': ('type', 'str'),
-    'Cód. Insumo': ('citem', 'str'),
-    'Desc. Insumo': ('item', 'str'),
-    'Unidade': ('unit', 'str'),
-    'Quantidade': ('quant', 'number'),
-    'Perda': ('loss', 'number'),
-    # 'Custo': ('cost', 'int'),
-}
 
 fmt_cols_structure = {
     'cprod': ('Código', '{:6}'),
@@ -63,13 +41,6 @@ fmt_cols_quotes = {
     'cofins%': ('% Cofins', '{:5.2%}'),
 }
 
-map_cols_prod = {
-    'CÓD.PROD.': ('cprod', 'int'),
-    'NOME_PRODUTO': ('prod', 'str'),
-    'Industrializador': ('ind', 'str'),
-    'Porcentagem': ('percent', 'number')
-}
-
 fmt_cols_prod = {
     'cprod': ('Código', '{:6}'),
     'prod': ('Produto', '{}'),
@@ -85,14 +56,6 @@ sheet_names = {
     'LOG': 'LOG',
     'MP': 'MP',
     'ENV': 'ENV'
-}
-
-map_cols_detail = {
-    'Matéria-prima': ('item', 'str'),
-    'Código New Age': ('citem', 'str'),
-    'UND': ('unit', 'str'),
-    'Quant': ('quant', 'float'),
-    'Perda': ('loss', 'float')
 }
 
 fmt_cols_costitem = {
@@ -237,10 +200,9 @@ class CostAdmApp:
             'costs_avg': 'Custos Médios',
         }
 
-    def load_quotes(self, file_name):
+    def load_quotes(self, file_name, reader):
         """Doc String."""
-        quotes, err = read_sheet(file_name, 'Preços', map_cols_quotes)
-        # quotes = quotes.rename(columns=map_cols_quotes)[[c for _, c in map_cols_quotes.items()]]
+        quotes, err = reader(file_name)
 
         if err[0] == 'ok':
             quotes['pis%'], quotes['cofins%'] = \
@@ -254,18 +216,18 @@ class CostAdmApp:
             self.df_valid['costs_avg'] = False
         return err
 
-    def load_prod_vols(self, file_name):
+    def load_prod_vols(self, file_name, reader):
         """Doc String."""
-        df, err = read_sheet(file_name, 0, map_cols_prod)
+        df, err = reader(file_name)
         if err[0] == 'ok':
             self.df['prod_volumes'] = df
             self.df_valid['prod_volumes'] = True
             self.df_valid['costs_avg'] = False
         return err
 
-    def load_cost_structure(self, file_name):
+    def load_bom(self, file_name, reader):
         """Doc String."""
-        df, err = read_sheet(file_name, 0, map_cols_structure)
+        df, err = reader(file_name)
         if err[0] == 'ok':
             self.df['structure'] = df
             self.df_valid['structure'] = True
@@ -274,16 +236,32 @@ class CostAdmApp:
             self.df_valid['costs_avg'] = False
         return err
 
-    def load_recipes(self, file_names):
+    def create_bom(self, file_names, reader):
         """Doc String."""
-        df, err = cost_structure_from_recipes(file_names)
+        df, err = reader(file_names)
+        print(err)
         if err[0] == 'ok':
-            self.df['structure'] = df
-            self.df_valid['structure'], self.df_modified['structure'] = True, True
+            # Update old df with newly read in data frame
+            self.df['structure'] = self.bom_update(self.df['structure'], df)
+            # set to modified because structure was created from several input files (doent exist yet)
+            self.df_valid['structure'] = True
+            self.df_modified['structure'] =  True
             self.df_valid['costs_item'] = False
             self.df_valid['costs_copacker'] = False
             self.df_valid['costs_avg'] = False
         return err
+
+    def bom_update(self, df_orig, df_new):
+        if df_orig is None or df_orig.empty:
+            return df_new
+        d1 = df_orig.set_index(['cprod', 'type'])
+        d2 = df_new.set_index(['cprod', 'type'])
+        ix = d1.index.intersection(d2.index)
+        # drop all entries in d1 that also in d2 (d2 overwrites)
+        if not ix.empty:
+            d1.drop(ix, inplace=True)
+        return pd.concat([d1.reset_index(),d2.reset_index()])
+
 
     def save(self, types_to_save, file_name):
         """Doc String."""
@@ -424,164 +402,3 @@ class CostAdmApp:
         if group_cols:
             df = df.groupby(group_cols).agg(agg_map).reset_index()
         return df
-
-
-# Helper Functions
-
-def gen_cost_structure(df, cprod, prod, ind, cost_type, factor):
-    """Doc String."""
-    total = df.loc[df['item'] == 'Total', 'quant'].iloc[0]
-    df = df.dropna(subset=['citem'])  # drops the Total line as well
-    lng = df.shape[0]
-    df_cols = dict()
-
-    df_cols['cprod'] = [cprod] * lng
-    df_cols['prod'] = [prod] * lng
-    df_cols['ind'] = [ind] * lng
-    df_cols['type'] = [cost_type] * lng
-    for c in {_c for _c in df.columns}:
-        df_cols[c] = df[c]
-    # df_cols['cost'] = [0] * lng
-    df_cols['quant'] = df_cols['quant'] / total * factor  # scale to one unit
-
-    return pd.DataFrame(df_cols)
-
-
-def read_excel(file_name, *args, **kwargs):
-    """Doc String."""
-    df = None
-    ret = ('ok',None)
-    try:
-        df = pd.read_excel(file_name, *args, **kwargs)
-    # pylint: disable=broad-except
-    except Exception as err:
-        print(f"*** read_excel Type(err) = {type(err)}, hasattr(err,'args') = {hasattr(err, 'args')}")
-        print(f'*** read_excel: Error: {err.args[0]}')
-        ret =  ('file_not_found', err.args[0] if len(err.args) > 0 else "Unidentified Error")
-    return df, ret
-
-
-def read_sheet(file, sn, map_cols_new, max_rows=10, **kwargs):
-    """Doc String."""
-
-    col_names = [c for c in map_cols_new]  # create a list in case map_cols_new is a dict
-    df, err = read_excel(file, sheet_name=sn, header=None, nrows=max_rows)
-    if err[0] != 'ok':
-        print(f'*** read_excel: Error: {err}')
-        return df, err
-
-    row, cols_not_found  = pos_colnames(df, col_names, max_rows)
-
-    print(f'*** read_sheet: file ={file}, row ={row}, cols_not_found = {cols_not_found}')
-    if row < 0:
-        return None, ('cols_not_found', f"Couldn't find columns {cols_not_found}!")
-
-    # read again from the correct satarting position (will have correct col names adn dtypes)
-    df, err = read_excel(file, sheet_name=sn, skiprows=row, usecols=col_names, **kwargs)
-    if err[0] != 'ok':
-        return df, err
-
-    if isinstance(map_cols_new, dict):
-        # create mappings
-        map_rename, dtype_cols = dict(), dict()
-        for col_old, (col_new, dtype_col) in map_cols_new.items():
-            map_rename[col_old] = col_new
-            dtype_cols[dtype_col] = [*dtype_cols.get(dtype_col, []), col_old]
-        ret = check_dtypes(df, dtype_cols)
-        if ret[0] != 'ok':            # if not empty dict -> columns with wrong dt found
-            err = ('wrong_dtype', ret[1])
-            print(f'*** read_sheet: {err}')
-            return None, err
-
-        df = df.rename(columns=map_rename)
-
-    return df, ('ok', None)
-
-
-def pos_colnames(df, col_names, max_rows=0):
-    """Doc String."""
-    row = -1
-    cols_to_find = len(col_names)
-    df_rows, df_cols = df.shape
-    max_rows = max_rows if max_rows > 0 else df_rows
-    cols_not_found = col_names[:]
-    for i in range(0, max_rows):
-        n_found = 0
-        for j in range(0, df_cols):
-            if df.iat[i, j] in col_names:
-                # map column name from pd.read_excel (which is a number corr to nth column) to new column name
-                cols_not_found.remove(df.iat[i, j])
-                n_found += 1
-                if n_found == cols_to_find:
-                    break
-        if n_found == cols_to_find:
-            row = i
-            break
-    return row, cols_not_found
-
-
-def cost_structure_from_recipes(files):
-    """Doc String."""
-    df_list = []
-
-    for file in files:
-        print(f'Processing file {file}')
-        sh_index, err = read_sheet(file, 'Index', ['cprod', 'prod', 'ind', 'type', 'detail', 'fator'])
-        if err[0] != 'ok':
-            return None, err
-
-        # Process all items in index
-        sh_index = sh_index.dropna(subset=['detail'])
-        for cprod, prod, ind, cost_type, detail, factor in zip(sh_index['cprod'], sh_index['prod'], sh_index['ind'],
-                                                               sh_index['type'], sh_index['detail'], sh_index['fator']):
-            df, err = read_sheet(file, detail, map_cols_detail)
-            if err[0] != 'ok':
-                return None, err
-            # print(f'Appending {cprod}, {prod}, ind, {cost_type}')
-            df_list.append(gen_cost_structure(df, cprod, prod, ind, cost_type, factor))
-
-    return pd.concat(df_list, ignore_index=True), ('ok',None)
-
-
-def check_dtypes(df, dtype_cols):
-    """Doc String."""
-    wrong_dt = dict()
-    for dt, cols in dtype_cols.items():
-        dt = 'object' if dt == 'str' else dt
-        df_cols = df.select_dtypes(dt).columns
-        cols_wrong_dt = set(cols) - set(df_cols)
-        if cols_wrong_dt:
-            wrong_dt[dt] = cols_wrong_dt
-
-    if wrong_dt != {}:
-        return 'wrong dtype', f'Wrong data type, expected: {wrong_dt.__str__()[1:-1]}'
-    else:
-        return 'ok', None
-
-def write_df(xls_writer, df, sn, col_map, cols_group, agg_map):
-    """Doc String."""
-    print(f'*** write_df: {sn}')
-    print(df.columns)
-    print(col_map)
-    if cols_group:
-        for c in cols_group:
-            print(f'*** cols_group = {c}')
-        for c in agg_map:
-            print(f'*** agg_map[{c}] ={agg_map[c]}')
-        df = df.groupby(cols_group).agg(agg_map).reset_index()
-        print(f'*** after group {df.columns}')
-
-    # sort columns to write according to format order
-    sort_key_func = lambda x : {k:i for i, k in enumerate(col_map)}[x]
-    cols_write = [col_map[i] for i in sorted(list(set(df.columns) & set(col_map)),key=sort_key_func)]
-    print(f'col_map = {[*col_map]}')
-    print(f'cols_write = {cols_write}')
-    df.rename(columns=col_map)[cols_write]\
-                  .to_excel(xls_writer, sheet_name=sn, merge_cells=False, index=False)
-
-if __name__ == '__main__':
-    f = '/Users/maxi/Documents/WOW/CUSTOS/ABR/Itens Embalagens.xlsx'
-    sh = 'LITRO BC'
-
-    df = cost_structure_from_recipes([f])
-    print(df)

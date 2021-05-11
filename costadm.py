@@ -16,6 +16,7 @@ from costadm_ui import Ui_CostAdm
 from costadm_dialog_ui import Ui_MsgDialog
 from costadm_dialogsort_ui import Ui_DialogSort
 from costadm_app import CostAdmApp
+from costadm_io import  read_bom, read_bom_newage, read_quotes, read_prod_volumes, bom_from_recipes
 
 # pylint: disable=attribute-defined-outside-init
 # pylint: disable=invalid-name
@@ -192,15 +193,22 @@ class CostAdmMain(QMainWindow):
 
     def init_menus(self):
         """Doc String."""
+        bom_loader = lambda x: self.app.load_bom(x, read_bom)
+        bom_creator_newage = lambda x: self.app.create_bom(x, read_bom_newage)
+        bom_creator = lambda x: self.app.create_bom(x, bom_from_recipes)
+        quotes_loader =  lambda x: self.app.load_quotes(x, read_quotes)
+        prods_loader =  lambda x: self.app.load_prod_vols(x, read_prod_volumes)
         self.actions = {
-            'create_structure': ['load_files', lambda x: self.create_structure('structure', x)],
+            # 'create_structure': ['load_files', lambda x: self.create_structure('structure', x)],
             'calc_costs_item': ['no_load', lambda: self.calc_costs_item_copacker(['costs_item', 'costs_copacker'])],
             'calc_costs_avg': ['no_load', lambda: self.calc_costs_avg('costs_avg')],
-            'load_structure': ['load_file', lambda x: self.load_model('structure', x, self.app.load_cost_structure)],
-            'load_quotes': ['load_file', lambda x: self.load_model('quotes', x, self.app.load_quotes)],
-            'load_prod': ['load_file', lambda x: self.load_model('prod_volumes', x, self.app.load_prod_vols)],
+            'load_bom': ['load_file', lambda x: self.load_model('structure', x, bom_loader)],
+            'create_bom_newage': ['load_files', lambda x: self.load_model('structure', x, bom_creator_newage)],
+            'create_bom': ['load_files', lambda x: self.load_model('structure', x, bom_creator)],
+            'load_quotes': ['load_file', lambda x: self.load_model('quotes', x, quotes_loader)],
+            'load_prod': ['load_file', lambda x: self.load_model('prod_volumes', x, prods_loader)],
             'export_costs': ['save_file_as', lambda x: self.app.save(['costs_item', 'costs_copacker', 'costs_avg'], x)],
-            'export_structure': ['save_file_as', lambda x: self.app.save(['structure'], x)],
+            'export_bom': ['save_file_as', lambda x: self.app.save(['structure'], x)],
             'quit': ['no_load', self.close],
             'expand': ['no_load', self.expand_model],
             'collapse': ['no_load', self.collapse_model],
@@ -274,14 +282,14 @@ class CostAdmMain(QMainWindow):
         self.ui.cost_tab.setCurrentIndex(self.tabname_tabno[name])
         self.cur_tab = self.ui.cost_tab.currentIndex()
 
-    def create_structure(self, name, file_names):
-        """Doc String."""
-        # print(f'*** create_structure({name})')
-        self.app.load_recipes(file_names)
-        self.models[name] = DfModel(self.app.df[name], self.app.df_formats[name],  self.app.grouper[name])
-        self.views[name].setModel(self.models[name])
-        self.ui.cost_tab.setCurrentIndex(self.tabname_tabno[name])
-        self.cur_tab = self.ui.cost_tab.currentIndex()
+    # def create_structure(self, name, file_names):
+    #     """Doc String."""
+    #     # print(f'*** create_structure({name})')
+    #     self.app.load_recipes(file_names)
+    #     self.models[name] = DfModel(self.app.df[name], self.app.df_formats[name],  self.app.grouper[name])
+    #     self.views[name].setModel(self.models[name])
+    #     self.ui.cost_tab.setCurrentIndex(self.tabname_tabno[name])
+    #     self.cur_tab = self.ui.cost_tab.currentIndex()
 
     def quit(self):
         """Doc String."""
@@ -354,7 +362,7 @@ class CostAdmMain(QMainWindow):
 
 
 # Helper functions
-def get_filename_gen(last_dir='/Users/maxi/Documents/WOW/CUSTOS/ABR'):
+def get_filename_gen(last_dir='/Users/maxi/Documents/WOW/CUSTOS/TST'):
     """Doc String."""
     # pylint: disable=unused-argument
     # pylint: disable=redefined-outer-name

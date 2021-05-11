@@ -18,4 +18,8 @@ In [384]: tst()
 {1: 1} {1} [1]
 ````
 
+<<<<<<< HEAD
 #### New Branch for NewAge Integration newage
+=======
+We have to make sure to unify structure of col_maps_in and to use read_sheet consistently
+>>>>>>> branch1

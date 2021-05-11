@@ -6,6 +6,7 @@
 
 import os
 import pandas as pd
+from pandas_helper import read_sheet
 
 wbooks = [
     '08.04.2021 -  Sufresh Bebida Abacaxi.xlsx',
@@ -25,7 +26,7 @@ wbooks = [
     '27.04.2021 - FG Cha Vermelho C. Amora.xlsx',
 ]
 
-col_map_in = {
+colmap_newage_in = {
     'Tipo : ': 'ptype',
     'Componente/Material': 'citem',
     'Descrição': 'item',
@@ -40,7 +41,47 @@ col_map_in = {
     'Arredondado': 'round',
 }
 
-col_map_out = {
+
+colmap_bom_in = {
+    'Código': ('cprod', 'int'),
+    'Produto': ('prod', 'str'),
+    'Industrializador': ('ind', 'str'),
+    'Tipo de Insumo': ('type', 'str'),
+    'Cód. Insumo': ('citem', 'str'),
+    'Desc. Insumo': ('item', 'str'),
+    'Unidade': ('unit', 'str'),
+    'Quantidade': ('quant', 'number'),
+    'Perda': ('loss', 'number'),
+    # 'Custo': ('cost', 'int'),
+}
+
+
+colmap_quotes_in = {
+    'Código': ('citem', 'str'),
+    'Descrição': ('item', 'str'),
+    'ICMS': ('icms%', 'float'),
+    'IPI': ('ipi%',  'float'),
+    'Pis/Cofins': ('pis%', 'float'),
+    'Preço Convertido R$ c/IPI': ('costtax_item', 'float'),
+    'Preço NET s/impostos c/frete': ('cost_item', 'float')
+}
+
+colmap_prods_in = {
+    'CÓD.PROD.': ('cprod', 'int'),
+    'NOME_PRODUTO': ('prod', 'str'),
+    'Industrializador': ('ind', 'str'),
+    'Porcentagem': ('percent', 'number')
+}
+
+colmap_recipe_in = {
+    'Matéria-prima': ('item', 'str'),
+    'Código New Age': ('citem', 'str'),
+    'UND': ('unit', 'str'),
+    'Quant': ('quant', 'float'),
+    'Perda': ('loss', 'float')
+}
+
+colmap_out = {
      'cprod': 'Código',
      'prod': 'Produto',
      'ind': 'Industrializador',
@@ -61,7 +102,7 @@ params_db = {
     'MaterialTypes': '/Users/maxi/Documents/WOW/CUSTOS/TST/DOWNLOAD/mat_types.xlsx',
 }
 
-def read_bom_newage(wbooks, col_map,):
+def _read_bom_newage(wbooks, col_map,):
     ind = pd.read_excel(params_db['CoPacker'])
     mat = pd.read_excel(params_db['MaterialTypes'])
     # make sure that prodcodes are strings
@@ -90,7 +131,7 @@ def read_bom_newage(wbooks, col_map,):
     #build the complete BOM dataframe
     df_to_concat = [ dfs[wbook][sheet] for wbook in dfs for sheet in dfs[wbook] ]
     if df_to_concat == []:
-        return None, 'no-data'
+        return None, ('no-data', 'No data to process')
     df_bom = pd.concat(df_to_concat)
 
     # Drop any lines with empty product codes
@@ -106,7 +147,7 @@ def read_bom_newage(wbooks, col_map,):
         pass
 
     # Drop all columns we are not interested in
-    cols_to_drop = list(set(df.columns) - set([*col_map_out]))
+    cols_to_drop = list(set(df.columns) - set([*colmap_out]))
     df.drop(columns=cols_to_drop, inplace=True)
 
     # remove leading or trailing blanks in all string columns
@@ -143,99 +184,65 @@ def read_bom_newage(wbooks, col_map,):
     # divide all values by number of units per box
     df_bom['quant'] = df_bom['quant'] / df_bom['un_cx']
 
-    df_bom = df_bom[[*col_map_out]]
+    df_bom = df_bom[[*colmap_out]]
 
-    return df_bom, 'ok'
+    return df_bom, ('ok', None)
+
+### Deine the external interface
+read_bom_newage = lambda x: _read_bom_newage(x, colmap_newage_in)
+
+def read_prod_volumes(file_name):
+    return read_sheet(file_name, 0, colmap_prods_in)
 
 
-###################### Functions to read Excel files into Pandas #############
-def read_excel(file_name, *args, **kwargs):
+def read_quotes(file_name):
+    return read_sheet(file_name, 'Preços', colmap_quotes_in)
+
+
+def read_bom(file_name):
+    return read_sheet(file_name, 0, colmap_bom_in)
+
+
+def make_bom(df, cprod, prod, ind, cost_type, factor):
     """Doc String."""
-    df = None
-    ret = ('ok', None)
-    try:
-        df = pd.read_excel(file_name, *args, **kwargs)
-    # pylint: disable=broad-except
-    except Exception as err:
-        print(f"*** read_excel Type(err) = {type(err)}, hasattr(err,'args') = {hasattr(err, 'args')}")
-        print(f'*** read_excel: Error: {err.args[0]}')
-        ret =  ('file_not_found', err.args[0] if len(err.args) > 0 else "Unidentified Error")
-    return df, ret
+    total = df.loc[df['item'] == 'Total', 'quant'].iloc[0]
+    df = df.dropna(subset=['citem'])  # drops the Total line as well
+    lng = df.shape[0]
+    df_cols = dict()
+
+    df_cols['cprod'] = [cprod] * lng
+    df_cols['prod'] = [prod] * lng
+    df_cols['ind'] = [ind] * lng
+    df_cols['type'] = [cost_type] * lng
+    for c in {_c for _c in df.columns}:
+        df_cols[c] = df[c]
+    # df_cols['cost'] = [0] * lng
+    df_cols['quant'] = df_cols['quant'] / total * factor  # scale to one unit
+
+    return pd.DataFrame(df_cols)
 
 
-def read_sheet(file, sn, map_cols_new, max_rows=10, **kwargs):
+def bom_from_recipes(recipes):
     """Doc String."""
+    df_list = []
 
-    col_names = [c for c in map_cols_new]  # create a list in case map_cols_new is a dict
-    df, err = read_excel(file, sheet_name=sn, header=None, nrows=max_rows)
-    if err[0] != 'ok':
-        print(f'*** read_excel: Error: {err}')
-        return df, err
-
-    row, cols_not_found  = pos_colnames(df, col_names, max_rows)
-
-    print(f'*** read_sheet: file ={file}, row ={row}, cols_not_found = {cols_not_found}')
-    if row < 0:
-        return None, ('cols_not_found', f"Couldn't find columns {cols_not_found}!")
-
-    # read again from the correct satarting position (will have correct col names adn dtypes)
-    df, err = read_excel(file, sheet_name=sn, skiprows=row, usecols=col_names, **kwargs)
-    if err[0] != 'ok':
-        return df, err
-
-    if isinstance(map_cols_new, dict):
-        # create mappings
-        map_rename, dtype_cols = dict(), dict()
-        for col_old, (col_new, dtype_col) in map_cols_new.items():
-            map_rename[col_old] = col_new
-            dtype_cols[dtype_col] = [*dtype_cols.get(dtype_col, []), col_old]
-        ret = check_dtypes(df, dtype_cols)
-        if ret[0] != 'ok':            # if not empty dict -> columns with wrong dt found
-            err = ('wrong_dtype', ret[1])
-            print(f'*** read_sheet: {err}')
+    for file in recipes:
+        print(f'Processing file {file}')
+        sh_index, err = read_sheet(file, 'Index', ['cprod', 'prod', 'ind', 'type', 'detail', 'fator'])
+        if err[0] != 'ok':
             return None, err
 
-        df = df.rename(columns=map_rename)
+        # Process all items in index
+        sh_index = sh_index.dropna(subset=['detail'])
+        for cprod, prod, ind, cost_type, detail, factor in zip(sh_index['cprod'], sh_index['prod'], sh_index['ind'],
+                                                               sh_index['type'], sh_index['detail'], sh_index['fator']):
+            df, err = read_sheet(file, detail, colmap_recipe_in)
+            if err[0] != 'ok':
+                return None, err
+            # print(f'Appending {cprod}, {prod}, ind, {cost_type}')
+            df_list.append(make_bom(df, cprod, prod, ind, cost_type, factor))
 
-    return df, ('ok', None)
-
-
-def pos_colnames(df, col_names, max_rows=0):
-    """Doc String."""
-    row = -1
-    cols_to_find = len(col_names)
-    df_rows, df_cols = df.shape
-    max_rows = max_rows if max_rows > 0 else df_rows
-    cols_not_found = col_names[:]
-    for i in range(0, max_rows):
-        n_found = 0
-        for j in range(0, df_cols):
-            if df.iat[i, j] in col_names:
-                # map column name from pd.read_excel (which is a number corr to nth column) to new column name
-                cols_not_found.remove(df.iat[i, j])
-                n_found += 1
-                if n_found == cols_to_find:
-                    break
-        if n_found == cols_to_find:
-            row = i
-            break
-    return row, cols_not_found
-
-
-def check_dtypes(df, dtype_cols):
-    """Doc String."""
-    wrong_dt = dict()
-    for dt, cols in dtype_cols.items():
-        dt = 'object' if dt == 'str' else dt
-        df_cols = df.select_dtypes(dt).columns
-        cols_wrong_dt = set(cols) - set(df_cols)
-        if cols_wrong_dt:
-            wrong_dt[dt] = cols_wrong_dt
-
-    if wrong_dt != {}:
-        return 'wrong dtype', f'Wrong data type, expected: {wrong_dt.__str__()[1:-1]}'
-    else:
-        return 'ok', None
+    return pd.concat(df_list, ignore_index=True), ('ok',None)
 
 
 def write_df(xls_writer, df, sn, col_map, cols_group, agg_map):
@@ -269,8 +276,11 @@ def strip_chars(df,  columns=frozenset(), chars=None,):
                 pass
     return df
 
+# Predefined Reader functions
+
 
 if __name__ == '__main__':
     base_dir = '/Users/maxi/Documents/WOW/CUSTOS/TST/DOWNLOAD'
-    df, ret = read_bom_newage([ os.path.join(base_dir, wb) for wb in wbooks ], col_map_in)
-    df_writer = lambda x='estrutura_newage.xlsx': df.rename(columns=col_map_out).to_excel(x)
+    df, ret = read_bom_newage([ os.path.join(base_dir, wb) for wb in wbooks ])
+    # df_writer = lambda x='estrutura_newage.xlsx': df.rename(columns=colmap_out).to_excel(x)
+    print(df)
