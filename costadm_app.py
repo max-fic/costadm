@@ -26,7 +26,7 @@ fmt_cols_structure = {
     'item': ('Desc. Insumo', '{}'),
     'unit': ('Unidade', '{}'),
     'quant': ('Quantidade', '{:9.6f}'),
-    'loss': ('Perda', '{:5.2%}'),
+    # 'loss': ('Perda', '{:5.2%}'),
     # 'cost': ('Custo', '{:3d}')
 }
 
@@ -137,7 +137,8 @@ cost_types = [
 # Class with application logic
 class CostAdmApp:
     """Doc String."""
-    def __init__(self):
+    def __init__(self, db):
+        self.db = db
         self.df = {
             'structure': None,
             'costs_item': None,
@@ -299,7 +300,15 @@ class CostAdmApp:
         if not self.df_valid['structure'] or not self.df_valid['quotes']:
             return
         # pylint: disable=unsubscriptable-object
-        costs_item = pd.merge(self.df['structure'],
+        ind = self.db.read('copacker')
+        ind = ind.melt(id_vars=['cprod', 'prod'],
+                       value_vars=['MP', 'ME', 'ENV', 'LOG'],
+                       var_name='type', value_name='loss')
+
+        costs_item = pd.merge(self.df['structure'], ind[['cprod', 'type', 'loss']], 
+                              how='left', on=['cprod', 'type'])
+
+        costs_item = pd.merge(costs_item,
                               self.df['quotes']
                               [['citem', 'icms%', 'ipi%', 'pis%', 'cofins%', 'costtax_item', 'cost_item']],
                               how='left',

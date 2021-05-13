@@ -16,10 +16,13 @@ from costadm_ui import Ui_CostAdm
 from costadm_dialog_ui import Ui_MsgDialog
 from costadm_dialogsort_ui import Ui_DialogSort
 from costadm_app import CostAdmApp
-from costadm_io import  read_bom, read_bom_newage, read_quotes, read_prod_volumes, bom_from_recipes
+from costadm_io import  read_bom, read_bom_newage_db, read_quotes, read_prod_volumes, bom_from_recipes
+from db import DB, XlsDB
 
 # pylint: disable=attribute-defined-outside-init
 # pylint: disable=invalid-name
+
+config_default = {'path': None, 'db': 'db.xlsx', 'user': None}
 
 class DfModel(QAbstractTableModel):
     """Doc String."""
@@ -185,7 +188,10 @@ class CostAdmMain(QMainWindow):
         self.exit_dialog = MsgDialog('ALERTA', 'Alterações não salvas. Quer sair mesmo?','yes_no')
         self.ui = Ui_CostAdm()
         self.ui.setupUi(self)
-        self.app = CostAdmApp()
+        self.config = read_config()
+        print('Opening internal DB')
+        self.db = DB(XlsDB(os.path.join(self.config['path'],self.config['db'])))
+        self.app = CostAdmApp(self.db)
         self.init_tabs()
         self.init_menus()
         self.init_buttons()
@@ -194,6 +200,7 @@ class CostAdmMain(QMainWindow):
     def init_menus(self):
         """Doc String."""
         bom_loader = lambda x: self.app.load_bom(x, read_bom)
+        read_bom_newage = lambda x: read_bom_newage_db(x, self.db)
         bom_creator_newage = lambda x: self.app.create_bom(x, read_bom_newage)
         bom_creator = lambda x: self.app.create_bom(x, bom_from_recipes)
         quotes_loader =  lambda x: self.app.load_quotes(x, read_quotes)
@@ -396,6 +403,24 @@ def get_filename_gen(last_dir='/Users/maxi/Documents/WOW/CUSTOS/TST'):
         return file_name, is_valid
 
     return get_filename
+
+def read_config():
+    # TODO: Error checking
+    config = config_default
+    path_name = os.path.dirname(sys.argv[0])
+    file_name = os.path.join(path_name,'costadm.cfg')
+
+    if not os.path.isfile(file_name):     # No config file
+         return config
+
+    with open(file_name) as reader:
+        for line in reader:
+            key, value = line.split(':')
+            config[key.strip()] = value.strip()
+    config['path'] = path_name
+
+    return config
+        
 
 
 get_filename = get_filename_gen()

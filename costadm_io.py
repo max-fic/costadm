@@ -33,7 +33,7 @@ colmap_newage_in = {
     'Receita': 'rec',
     'Unidade': 'unit',
     'Principal/Semi-Acabado': 'cparent',
-    '% Perda': 'loss',
+    # '% Perda': 'loss',
     'Quantidade': 'quant_org',
     'Coeficiente': 'coef',
     'Quantidade Total': 'qtot',
@@ -51,7 +51,7 @@ colmap_bom_in = {
     'Desc. Insumo': ('item', 'str'),
     'Unidade': ('unit', 'str'),
     'Quantidade': ('quant', 'number'),
-    'Perda': ('loss', 'number'),
+    # 'Perda': ('loss', 'number'),
     # 'Custo': ('cost', 'int'),
 }
 
@@ -97,14 +97,10 @@ ptype = {
     'mp': '2-MATERIA PRIMA',
     'semi': '1-SEMI ACABADO ',
 }
-params_db = {
-    'CoPacker': '/Users/maxi/Documents/WOW/CUSTOS/TST/DOWNLOAD/prod_ind.xlsx',
-    'MaterialTypes': '/Users/maxi/Documents/WOW/CUSTOS/TST/DOWNLOAD/mat_types.xlsx',
-}
 
-def _read_bom_newage(wbooks, col_map,):
-    ind = pd.read_excel(params_db['CoPacker'])
-    mat = pd.read_excel(params_db['MaterialTypes'])
+def _read_bom_newage(wbooks, col_map, db):
+    ind = db.read('copacker')
+    mat = db.read('tipo_material')
     # make sure that prodcodes are strings
     cur_prods= set([ str(cprod) for cprod in list(ind['cprod']) ])
     new_cols = [ val for _, val in col_map.items() ]
@@ -188,8 +184,8 @@ def _read_bom_newage(wbooks, col_map,):
 
     return df_bom, ('ok', None)
 
-### Deine the external interface
-read_bom_newage = lambda x: _read_bom_newage(x, colmap_newage_in)
+### Define the external interface
+read_bom_newage_db = lambda file, db: _read_bom_newage(file, colmap_newage_in, db)
 
 def read_prod_volumes(file_name):
     return read_sheet(file_name, 0, colmap_prods_in)
@@ -275,12 +271,3 @@ def strip_chars(df,  columns=frozenset(), chars=None,):
             except AttributeError:
                 pass
     return df
-
-# Predefined Reader functions
-
-
-if __name__ == '__main__':
-    base_dir = '/Users/maxi/Documents/WOW/CUSTOS/TST/DOWNLOAD'
-    df, ret = read_bom_newage([ os.path.join(base_dir, wb) for wb in wbooks ])
-    # df_writer = lambda x='estrutura_newage.xlsx': df.rename(columns=colmap_out).to_excel(x)
-    print(df)
